@@ -18,7 +18,7 @@ ap.add_argument("-t", "--threshold", type=float, default=0.3,
 args = vars(ap.parse_args())
 
 # load the COCO class labels our YOLO model was trained on
-labelsPath = 'yolo-coco\coco.names'
+labelsPath = os.path.sep.join(['yolo-coco', 'coco.names'])
 LABELS = open(labelsPath).read().strip().split("\n")
 
 # initialize a list of colors to represent each possible class label
@@ -27,8 +27,9 @@ COLORS = np.random.randint(0, 255, size=(len(LABELS), 3),
 	dtype="uint8")
 
 # derive the paths to the YOLO weights and model configuration
-weightsPath = 'yolo-coco\yolov3.weights'
-configPath = 'yolo-coco\yolov3.cfg'
+weightsPath = os.path.sep.join(['yolo-coco', 'yolov3.weights'])
+configPath = os.path.sep.join(['yolo-coco', 'yolov3.cfg'])
+
 
 # load our YOLO object detector trained on COCO dataset (80 classes)
 print("[INFO] loading YOLO from disk...")
@@ -40,7 +41,10 @@ image = cv2.imread(args["image"])
 
 # determine only the *output* layer names that we need from YOLO
 ln = net.getLayerNames()
-ln = [ln[i[0] - 1] for i in net.getUnconnectedOutLayers()]
+try:
+    ln = [ln[i - 1] for i in net.getUnconnectedOutLayers().flatten()]
+except Exception:
+    ln = [ln[i[0] - 1] for i in net.getUnconnectedOutLayers()]
 
 # construct a blob from the input image and then perform a forward
 # pass of the YOLO object detector, giving us our bounding boxes and
@@ -98,6 +102,17 @@ for output in layerOutputs:
 idxs = cv2.dnn.NMSBoxes(boxes, confidences, args["confidence"],
 	args["threshold"])
 
+# calculate display dimensions to fit screen comfortably (default max 500x360)
+max_display_w = 500
+max_display_h = 360
+
+display_scale = min(max_display_w / W, max_display_h / H, 1.0)
+
+# scale line thickness and font so they stay prominent and readable after downsampling
+line_thickness = max(2, int(3.5 / display_scale))
+font_scale = max(0.5, 0.65 / display_scale)
+font_thickness = max(1, int(1.8 / display_scale))
+
 # ensure at least one detection exists
 if len(idxs) > 0:
 	# loop over the indexes we are keeping
@@ -106,13 +121,53 @@ if len(idxs) > 0:
 		(x, y) = (boxes[i][0], boxes[i][1])
 		(w, h) = (boxes[i][2], boxes[i][3])
 
-		# draw a bounding box rectangle and label on the image
-		color = [int(c) for c in COLORS[classIDs[i]]]
-		cv2.rectangle(image, (x, y), (x + w, y + h), color, 2)
-		text = "{}: {:.4f}".format(LABELS[classIDs[i]], confidences[i])
-		cv2.putText(image, text, (x, y - 5), cv2.FONT_HERSHEY_SIMPLEX,
-			0.5, color, 2)
+		# Clamp coordinates strictly inside image boundaries so stroke is never cut off
+		half_thick = line_thickness // 2 + 1
+		x1 = max(half_thick, min(W - half_thick, x))
+		y1 = max(half_thick, min(H - half_thick, y))
+		x2 = max(x1 + half_thick, min(W - half_thick, x + w))
+		y2 = max(y1 + half_thick, min(H - half_thick, y + h))
 
-# show the output image
-cv2.imshow("Image", image)
+		color = [int(c) for c in COLORS[classIDs[i]]]
+
+		# draw bounding box
+		cv2.rectangle(image, (x1, y1), (x2, y2), color, line_thickness)
+
+		# label text and size
+		text = "{}: {:.1f}%".format(LABELS[classIDs[i]], confidences[i] * 100)
+		(text_w, text_h), baseline = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, font_thickness)
+
+		# draw filled background badge for the label
+		pad = int(4 / display_scale)
+		if y1 - text_h - baseline - pad * 2 < 0:
+			badge_y1 = y1
+			badge_y2 = y1 + text_h + baseline + pad * 2
+			text_y = badge_y2 - baseline - pad
+		else:
+			badge_y1 = y1 - text_h - baseline - pad * 2
+			badge_y2 = y1
+			text_y = y1 - baseline - pad
+
+		badge_x2 = min(W, x1 + text_w + pad * 2)
+		cv2.rectangle(image, (x1, badge_y1), (badge_x2, badge_y2), color, -1)
+
+		# contrast text color (white or black depending on badge luminance)
+		luminance = 0.114 * color[0] + 0.587 * color[1] + 0.299 * color[2]
+		text_color = (255, 255, 255) if luminance < 140 else (0, 0, 0)
+		cv2.putText(image, text, (x1 + pad, text_y), cv2.FONT_HERSHEY_SIMPLEX,
+			font_scale, text_color, font_thickness)
+
+# resize for display to fit screen neatly
+if display_scale < 1.0:
+	display_w = int(W * display_scale)
+	display_h = int(H * display_scale)
+	display_image = cv2.resize(image, (display_w, display_h), interpolation=cv2.INTER_AREA)
+else:
+	display_image = image
+
+# show the output image in a resizable window that fits the screen
+cv2.namedWindow("Image", cv2.WINDOW_NORMAL)
+cv2.imshow("Image", display_image)
 cv2.waitKey(0)
+cv2.destroyAllWindows()
+
