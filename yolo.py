@@ -106,10 +106,14 @@ def process_single_image(detector, image_path, args, is_batch=False):
         cv2.imshow(win_title, display_img)
         print("[INFO] Press any key in the image window to continue (or 'q' to exit batch)...")
         key = cv2.waitKey(0) & 0xFF
-        cv2.destroyWindow(win_title)
+        try:
+            cv2.destroyWindow(win_title)
+        except Exception:
+            pass
         if key == ord('q'):
             return False
     return True
+
 
 
 def process_video_stream(detector, source, args, is_webcam=False):
@@ -178,7 +182,11 @@ def process_video_stream(detector, source, args, is_webcam=False):
     if writer:
         writer.release()
     if not args.no_display:
-        cv2.destroyAllWindows()
+        try:
+            cv2.destroyAllWindows()
+        except Exception:
+            pass
+
 
     total_time = time.time() - start_total
     avg_fps = frame_count / max(1e-5, total_time)
